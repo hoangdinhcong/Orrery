@@ -54,7 +54,14 @@ const CONFIG = {
   importantSize: 34,
   starCount: 200,
   introDurationMs: 1500,
+  // Orbit-rings layout.
+  orbitRingBase: 165, // radius of the innermost ring
+  orbitRingGap: 150, // spacing between concentric rings
+  orbitSpeedK: 13, // angular speed factor (inner rings turn faster)
+  orbitTilt: 0.9, // vertical squash, for a tilted-orbit look
 } as const;
+
+export type LayoutMode = 'force' | 'orbit';
 
 interface NodeView {
   node: SimNode;
@@ -74,6 +81,11 @@ interface NodeView {
   orbitRadius: number;
   dispX: number; // displayed position this frame (base + orbit)
   dispY: number;
+  // Orbit-rings layout: a planet revolving around the central sun.
+  ringRadius: number;
+  ringAngle: number;
+  ringSpeed: number;
+  isSun: boolean;
 }
 
 interface StarView {
@@ -104,13 +116,16 @@ export class GraphScene {
   private app = new Application();
   private readonly opts: GraphSceneOptions;
 
-  // Layers (bottom → top): stars, world (edges + nodes), screen-space labels.
+  // Layers (bottom → top): stars, world (rings + edges + nodes), labels.
   private starLayer = new Container();
   private world = new Container();
+  private ringsGfx = new Graphics();
   private edgesGfx = new Graphics();
   private nodesLayer = new Container();
   private selectionRing = new Graphics();
   private labelLayer = new Container();
+
+  private layoutMode: LayoutMode = 'force';
 
   private nodeViews = new Map<string, NodeView>();
   private nodeIndex = new Map<string, SimNode>();
@@ -145,6 +160,7 @@ export class GraphScene {
   private dragMoved = false;
   private lastDrag = { x: 0, y: 0 };
   private pinchDist = 0;
+  private pinchMid = { x: 0, y: 0 };
 
   // Flick momentum (px/sec) + double-tap detection for touch.
   private velocity = { x: 0, y: 0 };
@@ -186,12 +202,18 @@ export class GraphScene {
     this.app.canvas.style.touchAction = 'none';
 
     // Assemble the scene graph.
-    this.world.addChild(this.edgesGfx, this.selectionRing, this.nodesLayer);
+    this.world.addChild(
+      this.ringsGfx,
+      this.edgesGfx,
+      this.selectionRing,
+      this.nodesLayer,
+    );
     this.app.stage.addChild(this.starLayer, this.world, this.labelLayer);
 
     this.buildTextures();
     this.buildStars();
     this.buildNodes();
+    this.assignOrbits();
 
     // Visit the biggest products first when touring.
     this.tourOrder = [...this.opts.simNodes]
@@ -366,8 +388,66 @@ export class GraphScene {
         orbitRadius,
         dispX: node.x ?? 0,
         dispY: node.y ?? 0,
+        ringRadius: 0,
+        ringAngle: 0,
+        ringSpeed: 0,
+        isSun: false,
       });
     }
+  }
+
+  /**
+   * Assign each product a place in the sun-centred orbit layout: the biggest
+   * body becomes the sun at the origin, the rest sit on concentric rings by
+   * layer (L1 inner, L2 outer …) and revolve, inner rings turning faster.
+   */
+  private assignOrbits(): void {
+    const views = [...this.nodeViews.values()];
+    if (views.length === 0) return;
+
+    // The largest product is the sun.
+    const sun = views.reduce((a, b) => (b.node.size > a.node.size ? b : a));
+    sun.isSun = true;
+    sun.ringRadius = 0;
+    sun.ringAngle = 0;
+    sun.ringSpeed = 0;
+
+    const planets = views.filter((v) => v !== sun);
+    const layers = [...new Set(planets.map((v) => v.node.layer))].sort();
+    const byLayer = new Map<string, NodeView[]>();
+    for (const v of planets) {
+      const list = byLayer.get(v.node.layer) ?? [];
+      list.push(v);
+      byLayer.set(v.node.layer, list);
+    }
+
+    for (const [layer, list] of byLayer) {
+      const ringIndex = layers.indexOf(layer);
+      const radius = CONFIG.orbitRingBase + ringIndex * CONFIG.orbitRingGap;
+      const speed = CONFIG.orbitSpeedK / radius;
+      list.forEach((v, k) => {
+        v.ringRadius = radius;
+        v.ringAngle = (k / list.length) * Math.PI * 2 + ringIndex * 0.7;
+        v.ringSpeed = speed;
+      });
+    }
+  }
+
+  /** Switch between the force-directed constellation and the orbit rings. */
+  setLayoutMode(mode: LayoutMode): void {
+    if (this.layoutMode === mode) return;
+    this.layoutMode = mode;
+    this.markInteracted();
+    if (mode === 'orbit') {
+      // Snap displayed positions to the rings so framing is correct at once.
+      for (const v of this.nodeViews.values()) {
+        v.dispX = Math.cos(v.ringAngle) * v.ringRadius;
+        v.dispY = Math.sin(v.ringAngle) * v.ringRadius * CONFIG.orbitTilt;
+      }
+    } else {
+      this.ringsGfx.clear();
+    }
+    this.frameAll();
   }
 
   /* -------------------------- interactions ------------------------- */
@@ -417,6 +497,7 @@ export class GraphScene {
     } else if (this.pointers.size === 2) {
       this.dragging = false;
       this.pinchDist = this.currentPinchDistance();
+      this.pinchMid = this.currentPinchMid();
     }
   };
 
@@ -450,7 +531,10 @@ export class GraphScene {
 
   private onPointerUp = (e: FederatedPointerEvent): void => {
     this.pointers.delete(e.pointerId);
-    if (this.pointers.size < 2) this.pinchDist = 0;
+    if (this.pointers.size < 2) {
+      this.pinchDist = 0;
+      this.pinchMid = { x: 0, y: 0 };
+    }
     if (this.pointers.size === 0) {
       this.dragging = false;
       if (!this.dragMoved) {
@@ -518,16 +602,37 @@ export class GraphScene {
     return Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
   }
 
+  private currentPinchMid(): { x: number; y: number } {
+    const pts = [...this.pointers.values()];
+    if (pts.length < 2) return { x: 0, y: 0 };
+    return { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
+  }
+
+  /**
+   * Two-finger gesture = pan + zoom together (like a map): translate by how
+   * far the midpoint moved, and zoom by how the finger spread changed.
+   */
   private handlePinch(): void {
     const pts = [...this.pointers.values()];
     if (pts.length < 2) return;
     const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
-    if (this.pinchDist > 0) {
-      const midX = (pts[0].x + pts[1].x) / 2;
-      const midY = (pts[0].y + pts[1].y) / 2;
-      this.zoomAround(midX, midY, this.camera.scale * (dist / this.pinchDist));
+    const midX = (pts[0].x + pts[1].x) / 2;
+    const midY = (pts[0].y + pts[1].y) / 2;
+
+    // Pan by the midpoint movement.
+    if (this.pinchMid.x !== 0 || this.pinchMid.y !== 0) {
+      this.camera.x += midX - this.pinchMid.x;
+      this.camera.y += midY - this.pinchMid.y;
     }
+    // Zoom around the current midpoint by the spread ratio.
+    if (this.pinchDist > 0) {
+      this.zoomAround(midX, midY, this.camera.scale * (dist / this.pinchDist));
+    } else {
+      this.syncTargetToCamera();
+    }
+
     this.pinchDist = dist;
+    this.pinchMid = { x: midX, y: midY };
   }
 
   /** Zoom toward a screen anchor, keeping the world point under it fixed. */
@@ -581,13 +686,17 @@ export class GraphScene {
     const w = this.app.screen.width;
     const h = this.app.screen.height;
     const compact = w < 760;
+    // Aim at the body's displayed position so it works in either layout.
+    const view = this.nodeViews.get(node.id);
+    const px = view ? view.dispX : node.x ?? 0;
+    const py = view ? view.dispY : node.y ?? 0;
     if (tour) {
       // Touring: keep the focal product comfortably centred, lower third
       // free for labels.
       this.target = {
         scale: CONFIG.tourScale,
-        x: w / 2 - (node.x ?? 0) * CONFIG.tourScale,
-        y: h * 0.46 - (node.y ?? 0) * CONFIG.tourScale,
+        x: w / 2 - px * CONFIG.tourScale,
+        y: h * 0.46 - py * CONFIG.tourScale,
       };
       return;
     }
@@ -598,8 +707,8 @@ export class GraphScene {
     const scale = Math.max(this.camera.scale, CONFIG.focusScale);
     this.target = {
       scale,
-      x: anchorX - (node.x ?? 0) * scale,
-      y: anchorY - (node.y ?? 0) * scale,
+      x: anchorX - px * scale,
+      y: anchorY - py * scale,
     };
   }
 
@@ -668,9 +777,30 @@ export class GraphScene {
       : clamp((performance.now() - this.introStart) / CONFIG.introDurationMs, 0, 1);
 
     this.updateNodes(dt, introT, t);
+    this.drawRings();
     this.drawEdges(introT);
     this.updateSelectionRing(t);
   };
+
+  /** Faint concentric orbit paths, only in the orbit-rings layout. */
+  private drawRings(): void {
+    const g = this.ringsGfx;
+    g.clear();
+    if (this.layoutMode !== 'orbit') return;
+    const widthScale = 1 / this.camera.scale;
+    const radii = new Set<number>();
+    for (const v of this.nodeViews.values()) {
+      if (v.ringRadius > 0) radii.add(v.ringRadius);
+    }
+    for (const r of radii) {
+      // Planets ride a tilted ellipse, so the path is that same ellipse.
+      g.ellipse(0, 0, r, r * CONFIG.orbitTilt).stroke({
+        width: widthScale,
+        color: 0x8a6fb0,
+        alpha: 0.2,
+      });
+    }
+  }
 
   private updateTour(dtMs: number): void {
     if (this.opts.reducedMotion || this.userInteracted) return;
@@ -703,13 +833,22 @@ export class GraphScene {
     for (const view of this.nodeViews.values()) {
       const { node, container, glow, labelBox } = view;
 
-      // Celestial drift: orbit the force-settled base on a tilted ellipse.
-      const ox =
-        Math.cos(t * view.orbitSpeed + view.orbitPhase) * view.orbitRadius;
-      const oy =
-        Math.sin(t * view.orbitSpeed + view.orbitPhase) * view.orbitRadius * 0.6;
-      view.dispX = (node.x ?? 0) + ox;
-      view.dispY = (node.y ?? 0) + oy;
+      if (this.layoutMode === 'orbit') {
+        // Revolve around the central sun on a tilted ring.
+        view.ringAngle += view.ringSpeed * dt;
+        view.dispX = Math.cos(view.ringAngle) * view.ringRadius;
+        view.dispY = Math.sin(view.ringAngle) * view.ringRadius * CONFIG.orbitTilt;
+      } else {
+        // Celestial drift: orbit the force-settled base on a tilted ellipse.
+        const ox =
+          Math.cos(t * view.orbitSpeed + view.orbitPhase) * view.orbitRadius;
+        const oy =
+          Math.sin(t * view.orbitSpeed + view.orbitPhase) *
+          view.orbitRadius *
+          0.6;
+        view.dispX = (node.x ?? 0) + ox;
+        view.dispY = (node.y ?? 0) + oy;
+      }
       container.x = view.dispX;
       container.y = view.dispY;
 
@@ -848,20 +987,36 @@ export class GraphScene {
     this.applySelection(id, id !== null);
   }
 
-  /** Reset the camera to frame the whole constellation. */
+  /** Reset the camera to frame the whole constellation (or orbit system). */
   frameAll(): void {
     if (this.nodeViews.size === 0) return;
     let minX = Infinity;
     let minY = Infinity;
     let maxX = -Infinity;
     let maxY = -Infinity;
-    for (const { node } of this.nodeViews.values()) {
-      const x = node.x ?? 0;
-      const y = node.y ?? 0;
-      minX = Math.min(minX, x - node.size);
-      minY = Math.min(minY, y - node.size);
-      maxX = Math.max(maxX, x + node.size);
-      maxY = Math.max(maxY, y + node.size);
+    if (this.layoutMode === 'orbit') {
+      // The system is centred at the origin; its reach is the outer ring.
+      let r = 0;
+      let maxSize = 0;
+      for (const v of this.nodeViews.values()) {
+        r = Math.max(r, v.ringRadius);
+        maxSize = Math.max(maxSize, v.node.size);
+      }
+      const ex = r + maxSize;
+      const ey = r * CONFIG.orbitTilt + maxSize;
+      minX = -ex;
+      maxX = ex;
+      minY = -ey;
+      maxY = ey;
+    } else {
+      for (const view of this.nodeViews.values()) {
+        const x = view.dispX;
+        const y = view.dispY;
+        minX = Math.min(minX, x - view.node.size);
+        minY = Math.min(minY, y - view.node.size);
+        maxX = Math.max(maxX, x + view.node.size);
+        maxY = Math.max(maxY, y + view.node.size);
+      }
     }
     const w = this.app.screen.width;
     const h = this.app.screen.height;

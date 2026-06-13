@@ -8,7 +8,7 @@ import { useGraphData } from '../hooks/useGraphData';
 import { useGraphInteractions } from '../hooks/useGraphInteractions';
 import type { EdgeType, GraphNodeData } from '../lib/graph.types';
 import { EDGE_META, hexString } from '../lib/graph.utils';
-import type { GraphScene } from '../pixi/GraphScene';
+import type { GraphScene, LayoutMode } from '../pixi/GraphScene';
 
 const NAV_ITEMS = [
   'MAP',
@@ -52,6 +52,12 @@ export function GraphPage() {
 
   const reduced = useMemo(prefersReducedMotion, []);
   const [introDone, setIntroDone] = useState(reduced);
+  const [layoutMode, setLayoutMode] = useState<LayoutMode>('force');
+
+  const changeLayout = (mode: LayoutMode) => {
+    setLayoutMode(mode);
+    sceneRef.current?.setLayoutMode(mode);
+  };
 
   const nodeById = useMemo(() => {
     const map = new Map<string, GraphNodeData>();
@@ -153,9 +159,29 @@ export function GraphPage() {
             ))}
           </ul>
         </div>
-        <span className="font-mono text-[11px] uppercase tracking-[0.18em] text-starlight-dim">
-          HI
-        </span>
+        <div className="pointer-events-auto flex items-center gap-4">
+          {/* Layout toggle: force-directed constellation ⟷ orbit rings */}
+          <div className="flex items-center rounded-full border border-haze p-0.5">
+            {(['force', 'orbit'] as LayoutMode[]).map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => changeLayout(mode)}
+                aria-pressed={layoutMode === mode}
+                className={`rounded-full px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.16em] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-bezel ${
+                  layoutMode === mode
+                    ? 'bg-haze text-starlight'
+                    : 'text-starlight-faint hover:text-starlight-dim'
+                }`}
+              >
+                {mode}
+              </button>
+            ))}
+          </div>
+          <span className="font-mono text-[11px] uppercase tracking-[0.18em] text-starlight-dim">
+            HI
+          </span>
+        </div>
       </motion.nav>
 
       {/* Title block */}
@@ -230,7 +256,7 @@ export function GraphPage() {
 
       {/* Bottom-center status bar */}
       <motion.div
-        className="absolute inset-x-0 bottom-7 z-20 flex justify-center"
+        className="pointer-events-none absolute inset-x-0 bottom-7 z-20 flex justify-center"
         {...chrome(0.7)}
       >
         <p className="font-mono text-[10.5px] tracking-wide text-starlight-faint">
@@ -271,7 +297,7 @@ export function GraphPage() {
       <AnimatePresence>
         {!introDone && (
           <motion.div
-            className="absolute inset-0 z-50 flex items-end justify-end bg-void px-12 pb-24 sm:px-20"
+            className="pointer-events-none absolute inset-0 z-50 flex items-end justify-end bg-void px-12 pb-24 sm:px-20"
             initial={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 1.1, ease: 'easeInOut' }}
