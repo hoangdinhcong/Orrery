@@ -11,44 +11,48 @@ import {
 } from 'pixi.js';
 import type {
   Camera,
+  Engine,
   GraphData,
-  NodeType,
   SimLink,
   SimNode,
 } from '../lib/graph.types';
 import {
   buildAdjacency,
   clamp,
-  colorForType,
+  colorForEngine,
   createGlowTexture,
   createStarTexture,
   damp,
-  EDGE_COLOR,
+  edgeMeta,
   endpointId,
-  hexString,
+  labelTint,
   neighborhoodOf,
+  statusGlyph,
 } from '../lib/graph.utils';
 
 /* ------------------------------------------------------------------ *
  * Tunables — every magic number that shapes the "feel" lives here.
  * ------------------------------------------------------------------ */
 const CONFIG = {
-  background: 0x05060f,
-  minScale: 0.25,
+  background: 0x070608,
+  minScale: 0.3,
   maxScale: 4,
-  defaultScale: 0.9,
-  introScale: 0.5,
-  focusScale: 1.55,
-  cameraSmoothing: 0.0009, // lower = snappier (used as base of damp)
-  alphaSmoothing: 0.0005,
+  defaultScale: 1.0,
+  introScale: 0.55,
+  focusScale: 1.7,
+  tourScale: 1.5,
+  tourHoldMs: 4200, // how long the camera lingers on each product
+  tourStartDelayMs: 1900, // overview hold after the intro before touring
+  cameraSmoothing: 0.0012, // lower = snappier (used as base of damp)
+  alphaSmoothing: 0.0006,
   zoomSpeed: 0.0016,
-  dimAlpha: 0.18, // alpha of nodes outside the active neighbourhood
-  dimEdgeAlpha: 0.04,
-  idleEdgeAlpha: 0.16,
-  activeEdgeAlpha: 0.7,
-  labelZoomThreshold: 1.1,
-  importantSize: 30,
-  starCount: 280,
+  dimAlpha: 0.16, // alpha of nodes outside the active neighbourhood
+  dimEdgeAlpha: 0.05,
+  idleEdgeAlpha: 0.28,
+  activeEdgeAlpha: 0.85,
+  labelZoomThreshold: 0.85,
+  importantSize: 34,
+  starCount: 200,
   introDurationMs: 1500,
 } as const;
 
@@ -57,7 +61,9 @@ interface NodeView {
   container: Container;
   glow: Sprite;
   core: Graphics;
-  label: Text;
+  labelBox: Container;
+  nameText: Text;
+  metaText: Text;
   important: boolean;
   alpha: number; // current eased alpha
   labelAlpha: number;
@@ -105,7 +111,7 @@ export class GraphScene {
   private stars: StarView[] = [];
   private adjacency: Map<string, Set<string>>;
 
-  private glowTextures = new Map<NodeType, Texture>();
+  private glowTextures = new Map<Engine, Texture>();
   private starTexture!: Texture;
 
   // Camera: `camera` is what's applied this frame; `target` is where it's
@@ -116,6 +122,16 @@ export class GraphScene {
   private hoveredId: string | null = null;
   private selectedId: string | null = null;
   private highlight: Set<string> | null = null;
+
+  // Cinematic auto-tour: when the user hasn't touched anything, the camera
+  // drifts from product to product on its own.
+  private tourOrder: string[] = [];
+  private tourIndex = -1;
+  private tourTimer = 0;
+  private tourFocusId: string | null = null;
+  private tourStarted = false;
+  private framedOnce = false;
+  private userInteracted = false;
 
   // Interaction bookkeeping.
   private pointers = new Map<number, { x: number; y: number }>();
@@ -141,6 +157,7 @@ export class GraphScene {
 
     await this.app.init({
       background: CONFIG.background,
+      backgroundAlpha: 0, // transparent — the CSS nebula/vignette shows through
       resizeTo: container,
       antialias: true,
       resolution: Math.min(window.devicePixelRatio || 1, 2),
@@ -163,6 +180,11 @@ export class GraphScene {
     this.buildStars();
     this.buildNodes();
 
+    // Visit the biggest products first when touring.
+    this.tourOrder = [...this.opts.simNodes]
+      .sort((a, b) => b.size - a.size)
+      .map((n) => n.id);
+
     // Centre the world origin on screen for both current and target camera.
     const cx = this.app.screen.width / 2;
     const cy = this.app.screen.height / 2;
@@ -171,12 +193,9 @@ export class GraphScene {
 
     this.setupInteractions();
 
-    // Kick off the layout. With reduced motion we settle it instantly so
-    // nothing flies across the screen.
     if (this.opts.reducedMotion) {
-      this.opts.restartSimulation(0); // we'll pre-tick below
-      // Pre-cool: advance the simulation without animating.
-      // (The hook gives us a stopped simulation; ticking it here settles it.)
+      this.opts.restartSimulation(0);
+      this.userInteracted = true; // never auto-tour with reduced motion
     } else {
       this.opts.restartSimulation(1);
     }
@@ -191,9 +210,9 @@ export class GraphScene {
 
   private buildTextures(): void {
     this.starTexture = createStarTexture(32);
-    const types = new Set<NodeType>(this.opts.data.nodes.map((n) => n.type));
-    for (const type of types) {
-      this.glowTextures.set(type, createGlowTexture(colorForType(type), 256));
+    const engines = new Set<Engine>(this.opts.data.nodes.map((n) => n.engine));
+    for (const engine of engines) {
+      this.glowTextures.set(engine, createGlowTexture(colorForEngine(engine), 256));
     }
   }
 
@@ -207,11 +226,11 @@ export class GraphScene {
       sprite.anchor.set(0.5);
       sprite.x = -w * 0.5 + Math.random() * w * 2;
       sprite.y = -h * 0.5 + Math.random() * h * 2;
-      const scale = 0.18 + Math.random() * 0.5;
+      const scale = 0.12 + Math.random() * 0.38;
       sprite.scale.set(scale);
-      // A touch of cool tint so the field reads as deep space, not snow.
-      sprite.tint = Math.random() < 0.2 ? 0x9fc0ff : 0xffffff;
-      const baseAlpha = 0.25 + Math.random() * 0.55;
+      // A touch of warm tint so the field reads as a dim ember sky.
+      sprite.tint = Math.random() < 0.25 ? 0xffd9b0 : 0xffffff;
+      const baseAlpha = 0.12 + Math.random() * 0.4;
       sprite.alpha = baseAlpha;
       this.starLayer.addChild(sprite);
       this.stars.push({
@@ -225,52 +244,78 @@ export class GraphScene {
 
   private buildNodes(): void {
     for (const node of this.opts.simNodes) {
-      const color = colorForType(node.type);
+      const color = colorForEngine(node.engine);
       const container = new Container();
       container.x = node.x ?? 0;
       container.y = node.y ?? 0;
 
-      const glow = new Sprite(this.glowTextures.get(node.type) ?? Texture.WHITE);
+      const glow = new Sprite(this.glowTextures.get(node.engine) ?? Texture.WHITE);
       glow.anchor.set(0.5);
-      glow.width = glow.height = node.size * 4.4;
-      glow.alpha = 0.85;
+      glow.width = glow.height = node.size * 4.6;
+      glow.alpha = 0.9;
+
+      const important =
+        node.status === 'live' || node.size >= CONFIG.importantSize;
 
       const core = new Graphics();
-      const coreR = node.size * 0.34;
+      const coreR = node.size * 0.3;
       core
-        .circle(0, 0, coreR * 1.5)
-        .fill({ color, alpha: 0.22 })
+        .circle(0, 0, coreR * 1.6)
+        .fill({ color, alpha: 0.28 })
         .circle(0, 0, coreR)
-        .fill({ color: 0xffffff, alpha: 0.92 })
-        .circle(0, 0, coreR)
-        .stroke({ width: 1.5, color, alpha: 0.9 });
-      // A small bright pupil gives bigger nodes a "sun" sparkle.
-      if (node.size >= 26) {
-        core.circle(-coreR * 0.25, -coreR * 0.25, coreR * 0.3).fill({
+        .fill({ color: 0xffffff, alpha: 0.95 });
+      // 'wedge' products get a hollow ring instead of a solid core, echoing
+      // the legend glyph; building/live get the bright pupil.
+      if (node.status === 'wedge') {
+        core
+          .circle(0, 0, coreR * 0.62)
+          .fill({ color: CONFIG.background, alpha: 1 })
+          .circle(0, 0, coreR)
+          .stroke({ width: Math.max(coreR * 0.18, 1.2), color, alpha: 0.9 });
+      } else if (important) {
+        core.circle(-coreR * 0.28, -coreR * 0.28, coreR * 0.34).fill({
           color: 0xffffff,
-          alpha: 0.95,
+          alpha: 0.98,
         });
       }
 
-      const important = node.type === 'main' || node.size >= CONFIG.importantSize;
-      const label = new Text({
-        text: node.label,
+      // Two-line screen-space label: name (with status glyph) + meta.
+      const tint = labelTint(node.engine);
+      const nameText = new Text({
+        text: `${statusGlyph(node.status)} ${node.label}`,
         style: {
-          fontFamily: 'Space Grotesk, sans-serif',
-          fontSize: important ? 15 : 13,
+          fontFamily: 'Inter, sans-serif',
+          fontSize: important ? 14.5 : 12.5,
           fontWeight: important ? '600' : '500',
-          fill: '#e8ecff',
-          align: 'center',
+          fill: `#${tint.toString(16).padStart(6, '0')}`,
+          letterSpacing: 0.2,
         },
       });
-      label.anchor.set(0.5, 0);
-      label.resolution = 2;
-      label.alpha = 0;
+      nameText.anchor.set(0.5, 0);
+      nameText.resolution = 2;
+
+      const metaText = new Text({
+        text: `${node.status} · ${node.layer} · engine ${node.engine}`,
+        style: {
+          fontFamily: 'Space Mono, monospace',
+          fontSize: 9.5,
+          fontWeight: '400',
+          fill: '#8a7f95',
+          letterSpacing: 0.6,
+        },
+      });
+      metaText.anchor.set(0.5, 0);
+      metaText.resolution = 2;
+      metaText.y = important ? 18 : 16;
+
+      const labelBox = new Container();
+      labelBox.addChild(nameText, metaText);
+      labelBox.alpha = 0;
 
       container.addChild(glow, core);
       container.eventMode = 'static';
       container.cursor = 'pointer';
-      container.hitArea = new Circle(0, 0, Math.max(node.size * 1.1, 18));
+      container.hitArea = new Circle(0, 0, Math.max(node.size * 1.1, 20));
 
       const startAlpha = this.opts.reducedMotion ? 1 : 0;
       container.alpha = startAlpha;
@@ -283,14 +328,16 @@ export class GraphScene {
       });
 
       this.nodesLayer.addChild(container);
-      this.labelLayer.addChild(label);
+      this.labelLayer.addChild(labelBox);
 
       this.nodeViews.set(node.id, {
         node,
         container,
         glow,
         core,
-        label,
+        labelBox,
+        nameText,
+        metaText,
         important,
         alpha: startAlpha,
         labelAlpha: 0,
@@ -321,7 +368,18 @@ export class GraphScene {
     this.app.canvas.addEventListener('wheel', this.onWheel, { passive: false });
   }
 
+  /** Any deliberate input ends the cinematic auto-tour for good. */
+  private markInteracted(): void {
+    if (this.userInteracted) return;
+    this.userInteracted = true;
+    if (this.tourFocusId) {
+      this.tourFocusId = null;
+      this.recomputeHighlight();
+    }
+  }
+
   private onPointerDown = (e: FederatedPointerEvent): void => {
+    this.markInteracted();
     this.pointers.set(e.pointerId, { x: e.global.x, y: e.global.y });
     if (this.pointers.size === 1) {
       this.dragging = true;
@@ -359,7 +417,6 @@ export class GraphScene {
     if (this.pointers.size < 2) this.pinchDist = 0;
     if (this.pointers.size === 0) this.dragging = false;
     if (this.pointers.size === 1) {
-      // Resume single-pointer drag from the remaining finger.
       const [remaining] = [...this.pointers.values()];
       this.dragging = true;
       this.lastDrag = { x: remaining.x, y: remaining.y };
@@ -368,6 +425,7 @@ export class GraphScene {
 
   private onWheel = (e: WheelEvent): void => {
     e.preventDefault();
+    this.markInteracted();
     const rect = this.app.canvas.getBoundingClientRect();
     const ax = e.clientX - rect.left;
     const ay = e.clientY - rect.top;
@@ -416,12 +474,13 @@ export class GraphScene {
   }
 
   private handleTap(id: string): void {
+    this.markInteracted();
     this.applySelection(id, true);
     this.opts.onSelect(id);
   }
 
   private recomputeHighlight(): void {
-    const focus = this.hoveredId ?? this.selectedId;
+    const focus = this.hoveredId ?? this.selectedId ?? this.tourFocusId;
     this.highlight = neighborhoodOf(focus, this.adjacency);
   }
 
@@ -434,13 +493,23 @@ export class GraphScene {
     }
   }
 
-  private focusOn(node: SimNode): void {
+  private focusOn(node: SimNode, tour = false): void {
     const w = this.app.screen.width;
     const h = this.app.screen.height;
     const compact = w < 760;
-    // Nudge the focal point left of centre on wide screens so the node
-    // doesn't end up hidden behind the detail panel.
-    const anchorX = compact ? w / 2 : w / 2 - 170;
+    if (tour) {
+      // Touring: keep the focal product comfortably centred, lower third
+      // free for labels.
+      this.target = {
+        scale: CONFIG.tourScale,
+        x: w / 2 - (node.x ?? 0) * CONFIG.tourScale,
+        y: h * 0.46 - (node.y ?? 0) * CONFIG.tourScale,
+      };
+      return;
+    }
+    // Selection: nudge left of centre on wide screens so the node isn't
+    // hidden behind the detail panel.
+    const anchorX = compact ? w / 2 : w / 2 - 180;
     const anchorY = compact ? h * 0.4 : h / 2;
     const scale = Math.max(this.camera.scale, CONFIG.focusScale);
     this.target = {
@@ -450,6 +519,17 @@ export class GraphScene {
     };
   }
 
+  private advanceTour(): void {
+    if (this.tourOrder.length === 0) return;
+    this.tourIndex = (this.tourIndex + 1) % this.tourOrder.length;
+    const id = this.tourOrder[this.tourIndex];
+    const node = this.nodeIndex.get(id);
+    if (!node) return;
+    this.tourFocusId = id;
+    this.recomputeHighlight();
+    this.focusOn(node, true);
+  }
+
   /* ----------------------------- frame ----------------------------- */
 
   private tick = (ticker: Ticker): void => {
@@ -457,6 +537,8 @@ export class GraphScene {
     const dtMs = ticker.deltaMS;
     const dt = dtMs / 1000;
     this.elapsed += dtMs;
+
+    this.updateTour(dtMs);
 
     // Ease the camera toward its target.
     this.camera.x = damp(this.camera.x, this.target.x, CONFIG.cameraSmoothing, dt);
@@ -472,8 +554,8 @@ export class GraphScene {
 
     // Parallax + twinkle for the ambient starfield.
     this.starLayer.position.set(
-      (this.camera.x - this.app.screen.width / 2) * 0.18,
-      (this.camera.y - this.app.screen.height / 2) * 0.18,
+      (this.camera.x - this.app.screen.width / 2) * 0.16,
+      (this.camera.y - this.app.screen.height / 2) * 0.16,
     );
     const t = this.elapsed / 1000;
     for (const star of this.stars) {
@@ -491,47 +573,68 @@ export class GraphScene {
     this.updateSelectionRing(t);
   };
 
+  private updateTour(dtMs: number): void {
+    if (this.opts.reducedMotion || this.userInteracted) return;
+    const sinceIntro = performance.now() - this.introStart;
+
+    // Once the layout has settled, frame the whole portfolio as an overview.
+    if (!this.framedOnce && sinceIntro > CONFIG.introDurationMs + 300) {
+      this.framedOnce = true;
+      this.frameAll();
+    }
+
+    if (sinceIntro < CONFIG.introDurationMs + CONFIG.tourStartDelayMs) return;
+
+    if (!this.tourStarted) {
+      this.tourStarted = true;
+      this.advanceTour();
+      this.tourTimer = 0;
+      return;
+    }
+    this.tourTimer += dtMs;
+    if (this.tourTimer >= CONFIG.tourHoldMs) {
+      this.tourTimer = 0;
+      this.advanceTour();
+    }
+  }
+
   private updateNodes(dt: number, introT: number): void {
     let i = 0;
     const n = Math.max(this.nodeViews.size, 1);
     for (const view of this.nodeViews.values()) {
-      const { node, container, glow, label } = view;
+      const { node, container, glow, labelBox } = view;
 
-      // Position from the live simulation.
       container.x = node.x ?? 0;
       container.y = node.y ?? 0;
 
       const inHighlight = !this.highlight || this.highlight.has(node.id);
       const isFocus =
-        node.id === this.hoveredId || node.id === this.selectedId;
+        node.id === this.hoveredId ||
+        node.id === this.selectedId ||
+        node.id === this.tourFocusId;
 
-      // Target alpha: full when relevant, dimmed otherwise; multiplied by
-      // a staggered intro fade-in.
       const stagger = clamp((introT - (i / n) * 0.4) / 0.6, 0, 1);
       const targetAlpha = (inHighlight ? 1 : CONFIG.dimAlpha) * stagger;
       view.alpha = damp(view.alpha, targetAlpha, CONFIG.alphaSmoothing, dt);
       container.alpha = view.alpha;
 
-      // Focused nodes flare a little brighter and larger.
-      const targetPulse = isFocus ? 1.18 : 1;
-      view.glowPulse = damp(view.glowPulse, targetPulse, 0.0008, dt);
-      glow.scale.set((node.size * 4.4 * view.glowPulse) / glow.texture.width);
-      glow.alpha = (inHighlight ? 0.9 : 0.45) * stagger;
+      const targetPulse = isFocus ? 1.2 : 1;
+      view.glowPulse = damp(view.glowPulse, targetPulse, 0.0009, dt);
+      glow.scale.set((node.size * 4.6 * view.glowPulse) / glow.texture.width);
+      glow.alpha = (inHighlight ? 0.95 : 0.4) * stagger;
 
       // Screen-space label placement keeps text crisp at every zoom level.
       const sx = (node.x ?? 0) * this.camera.scale + this.camera.x;
       const sy = (node.y ?? 0) * this.camera.scale + this.camera.y;
-      label.position.set(
-        sx,
-        sy + node.size * 0.5 * this.camera.scale + 12,
-      );
+      labelBox.position.set(sx, sy + node.size * 0.55 * this.camera.scale + 10);
+
       const labelVisible =
         view.important || this.camera.scale >= CONFIG.labelZoomThreshold;
       const labelTarget =
-        labelVisible && stagger > 0.5 ? (inHighlight ? 1 : 0.12) : 0;
-      view.labelAlpha = damp(view.labelAlpha, labelTarget, 0.0006, dt);
-      label.alpha = view.labelAlpha;
-      label.visible = view.labelAlpha > 0.02;
+        labelVisible && stagger > 0.5 ? (inHighlight ? 1 : 0.14) : 0;
+      view.labelAlpha = damp(view.labelAlpha, labelTarget, 0.0007, dt);
+      labelBox.alpha = view.labelAlpha;
+      labelBox.visible = view.labelAlpha > 0.02;
 
       i++;
     }
@@ -551,6 +654,7 @@ export class GraphScene {
       const tt = this.nodeIndex.get(tId);
       if (!s || !tt) continue;
 
+      const meta = edgeMeta(link.type);
       let alpha: number;
       let width: number;
       if (!this.highlight) {
@@ -564,29 +668,67 @@ export class GraphScene {
         width = 1;
       }
 
-      g.moveTo(s.x ?? 0, s.y ?? 0)
-        .lineTo(tt.x ?? 0, tt.y ?? 0)
-        .stroke({
-          width: width * widthScale,
-          color: EDGE_COLOR,
-          alpha: alpha * edgeFade,
-        });
+      this.strokeEdge(
+        g,
+        s.x ?? 0,
+        s.y ?? 0,
+        tt.x ?? 0,
+        tt.y ?? 0,
+        meta.color,
+        alpha * edgeFade,
+        width * widthScale,
+        meta.dashed,
+      );
+    }
+  }
+
+  /** Draw a straight or dashed edge in world space. */
+  private strokeEdge(
+    g: Graphics,
+    x1: number,
+    y1: number,
+    x2: number,
+    y2: number,
+    color: number,
+    alpha: number,
+    width: number,
+    dashed: boolean,
+  ): void {
+    if (!dashed) {
+      g.moveTo(x1, y1).lineTo(x2, y2).stroke({ width, color, alpha });
+      return;
+    }
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    const len = Math.hypot(dx, dy);
+    if (len < 0.0001) return;
+    const ux = dx / len;
+    const uy = dy / len;
+    const dash = 11 / this.camera.scale;
+    const gap = 7 / this.camera.scale;
+    for (let d = 0; d < len; d += dash + gap) {
+      const a = d;
+      const b = Math.min(d + dash, len);
+      g.moveTo(x1 + ux * a, y1 + uy * a)
+        .lineTo(x1 + ux * b, y1 + uy * b)
+        .stroke({ width, color, alpha });
     }
   }
 
   private updateSelectionRing(t: number): void {
     const g = this.selectionRing;
     g.clear();
-    if (!this.selectedId) return;
-    const node = this.nodeIndex.get(this.selectedId);
+    const id = this.selectedId ?? this.tourFocusId;
+    if (!id) return;
+    const node = this.nodeIndex.get(id);
     if (!node) return;
-    const color = colorForType(node.type);
+    const color = colorForEngine(node.engine);
     const pulse = 1 + Math.sin(t * 2.4) * 0.04;
-    const r = (node.size * 0.7 + 8) * pulse;
+    const r = (node.size * 0.7 + 9) * pulse;
     g.circle(node.x ?? 0, node.y ?? 0, r).stroke({
-      width: 1.5 / this.camera.scale,
+      width: 1.4 / this.camera.scale,
       color,
-      alpha: 0.7,
+      alpha: this.selectedId ? 0.75 : 0.4,
     });
   }
 
@@ -595,6 +737,7 @@ export class GraphScene {
   /** React pushes selection changes (e.g. panel close, legend click) here. */
   setSelected(id: string | null): void {
     if (this.selectedId === id) return;
+    if (id !== null) this.markInteracted();
     this.applySelection(id, id !== null);
   }
 
@@ -615,7 +758,7 @@ export class GraphScene {
     }
     const w = this.app.screen.width;
     const h = this.app.screen.height;
-    const pad = 120;
+    const pad = 220;
     const scale = clamp(
       Math.min((w - pad) / (maxX - minX), (h - pad) / (maxY - minY)),
       CONFIG.minScale,
@@ -628,6 +771,12 @@ export class GraphScene {
       x: w / 2 - cxWorld * scale,
       y: h / 2 - cyWorld * scale,
     };
+  }
+
+  /** "Reset view": frame everything and stop the auto-tour. */
+  resetView(): void {
+    this.markInteracted();
+    this.frameAll();
   }
 
   private onResize = (): void => {
@@ -644,10 +793,5 @@ export class GraphScene {
     for (const tex of this.glowTextures.values()) tex.destroy(true);
     this.starTexture?.destroy(true);
     this.app.destroy({ removeView: true }, { children: true });
-  }
-
-  /** Exposed mainly so the UI can build a legend from the live palette. */
-  static colorHex(type: NodeType): string {
-    return hexString(colorForType(type));
   }
 }

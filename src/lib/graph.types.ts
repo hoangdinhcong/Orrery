@@ -1,23 +1,29 @@
 import type { SimulationLinkDatum, SimulationNodeDatum } from 'd3-force';
 
 /**
- * The kinds of node in the product graph. Each maps to a glow colour in
- * `graph.utils.ts`. Add a new type here and give it a colour there.
+ * Where a product is in its life. Drives the glyph shown before its name
+ * (see `statusGlyph` in graph.utils.ts) and reads in the legend.
  */
-export type NodeType =
-  | 'main'
-  | 'feature'
-  | 'integration'
-  | 'data'
-  | 'ai'
-  | 'service';
+export type ProductStatus = 'live' | 'building' | 'wedge';
 
-/** A node exactly as it appears in `public/data/graph.json`. */
+/** Which "engine" a product runs on. Drives the glow colour. */
+export type Engine = 'A' | 'B' | 'C';
+
+/**
+ * How two products relate. Each maps to an edge colour + legend label in
+ * `graph.utils.ts`.
+ */
+export type EdgeType = 'extract' | 'ascends' | 'shares' | 'bundles';
+
+/** A product (node) exactly as it appears in `public/data/graph.json`. */
 export interface GraphNodeData {
   id: string;
   label: string;
-  type: NodeType;
-  /** Visual radius in world units. Bigger = more important. */
+  status: ProductStatus;
+  /** Layer in the portfolio ladder, e.g. "L1", "L2". */
+  layer: string;
+  engine: Engine;
+  /** Visual radius in world units. Bigger = more central. */
   size: number;
   description: string;
   /** Optional free-form tags shown in the detail panel. */
@@ -30,6 +36,7 @@ export interface GraphNodeData {
 export interface GraphEdgeData {
   source: string;
   target: string;
+  type: EdgeType;
   label?: string;
 }
 
@@ -52,6 +59,7 @@ export interface SimNode extends GraphNodeData, SimulationNodeDatum {}
  * them with references to the `SimNode` objects themselves.
  */
 export interface SimLink extends SimulationLinkDatum<SimNode> {
+  type: EdgeType;
   label?: string;
 }
 

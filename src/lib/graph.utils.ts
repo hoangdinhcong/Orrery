@@ -1,8 +1,10 @@
 import { Texture } from 'pixi.js';
 import type {
+  EdgeType,
+  Engine,
   GraphEdgeData,
   GraphNodeData,
-  NodeType,
+  ProductStatus,
   SimLink,
   SimNode,
 } from './graph.types';
@@ -12,23 +14,19 @@ import type {
  * ------------------------------------------------------------------ */
 
 /**
- * Glow colour per node type, as a 24-bit number (what Pixi wants).
- * Keep these in sync with the `--color-node-*` tokens in `index.css`.
+ * Glow colour per engine, as a 24-bit number (what Pixi wants).
+ * Keep these in sync with the `--color-engine-*` tokens in `index.css`.
  */
-export const NODE_COLORS: Record<NodeType, number> = {
-  main: 0xffe8b0, // warm star-gold — the sun of the system
-  ai: 0xff4fd8, // magenta
-  integration: 0x8b5cff, // violet
-  data: 0x2fe0c8, // teal
-  feature: 0xffb454, // amber
-  service: 0x4fa8ff, // azure
+export const ENGINE_COLORS: Record<Engine, number> = {
+  A: 0xffce8a, // gold
+  B: 0xb38cff, // violet
+  C: 0xff6a45, // ember
 };
 
-export const EDGE_COLOR = 0x8fb4ff; // faint cyan-white
 export const FALLBACK_COLOR = 0x9aa3d6;
 
-export function colorForType(type: NodeType): number {
-  return NODE_COLORS[type] ?? FALLBACK_COLOR;
+export function colorForEngine(engine: Engine): number {
+  return ENGINE_COLORS[engine] ?? FALLBACK_COLOR;
 }
 
 /** "#rrggbb" string (handy for HTML/Tailwind inline styles in the panel). */
@@ -36,17 +34,56 @@ export function hexString(color: number): string {
   return `#${color.toString(16).padStart(6, '0')}`;
 }
 
-const TYPE_LABELS: Record<NodeType, string> = {
-  main: 'Core',
-  feature: 'Feature',
-  integration: 'Integration',
-  data: 'Data',
-  ai: 'AI',
-  service: 'Service',
+/** A near-white tint of an engine colour, used for crisp label text. */
+export function labelTint(engine: Engine): number {
+  return mixToward(colorForEngine(engine), 0xffffff, 0.62);
+}
+
+/** Linearly mix `color` toward `target` by `t` (0..1). */
+export function mixToward(color: number, target: number, t: number): number {
+  const r = (color >> 16) & 0xff;
+  const g = (color >> 8) & 0xff;
+  const b = color & 0xff;
+  const tr = (target >> 16) & 0xff;
+  const tg = (target >> 8) & 0xff;
+  const tb = target & 0xff;
+  const mix = (a: number, c: number) => Math.round(a + (c - a) * t);
+  return (mix(r, tr) << 16) | (mix(g, tg) << 8) | mix(b, tb);
+}
+
+/** The glyph drawn before a product name, by status (matches the legend). */
+export function statusGlyph(status: ProductStatus): string {
+  switch (status) {
+    case 'live':
+      return '●';
+    case 'building':
+      return '◐';
+    case 'wedge':
+      return '○';
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * Edge relationships
+ * ------------------------------------------------------------------ */
+
+export interface EdgeMeta {
+  color: number;
+  /** Short legend label. */
+  legend: string;
+  /** Dashed line in the legend / on screen? */
+  dashed: boolean;
+}
+
+export const EDGE_META: Record<EdgeType, EdgeMeta> = {
+  extract: { color: 0xff7a45, legend: 'extract → intake', dashed: true },
+  ascends: { color: 0xffce8a, legend: 'ascends (ladder)', dashed: false },
+  shares: { color: 0x8aa0ff, legend: 'shares audience', dashed: true },
+  bundles: { color: 0x49d4a8, legend: 'bundles', dashed: false },
 };
 
-export function labelForType(type: NodeType): string {
-  return TYPE_LABELS[type] ?? type;
+export function edgeMeta(type: EdgeType): EdgeMeta {
+  return EDGE_META[type] ?? { color: FALLBACK_COLOR, legend: type, dashed: false };
 }
 
 /* ------------------------------------------------------------------ *
@@ -89,13 +126,6 @@ export function neighborhoodOf(
   return set;
 }
 
-/** A stable string key for an edge, used to look up its display object. */
-export function edgeKey(edge: GraphEdgeData | SimLink): string {
-  const s = typeof edge.source === 'object' ? edge.source.id : edge.source;
-  const t = typeof edge.target === 'object' ? edge.target.id : edge.target;
-  return `${String(s)}__${String(t)}`;
-}
-
 /** Resolve a link endpoint to its node id regardless of d3's mutation state. */
 export function endpointId(end: SimLink['source'] | SimLink['target']): string {
   return typeof end === 'object' && end !== null
@@ -134,7 +164,8 @@ export function easeOutCubic(t: number): number {
  * Build a soft radial-gradient sprite texture used for the glow halo
  * around every node. We draw it once per colour onto an offscreen canvas
  * and let Pixi cache it as a GPU texture — far cheaper than per-frame
- * blur filters.
+ * blur filters. The core is pushed toward white so big nodes read as
+ * white-hot suns with a coloured corona.
  */
 export function createGlowTexture(color: number, diameter = 256): Texture {
   const canvas = document.createElement('canvas');
@@ -156,9 +187,10 @@ export function createGlowTexture(color: number, diameter = 256): Texture {
     center,
     center,
   );
-  gradient.addColorStop(0.0, `rgba(${r},${g},${b},0.95)`);
-  gradient.addColorStop(0.18, `rgba(${r},${g},${b},0.55)`);
-  gradient.addColorStop(0.45, `rgba(${r},${g},${b},0.18)`);
+  gradient.addColorStop(0.0, 'rgba(255,255,255,0.98)');
+  gradient.addColorStop(0.08, `rgba(${r},${g},${b},0.92)`);
+  gradient.addColorStop(0.22, `rgba(${r},${g},${b},0.5)`);
+  gradient.addColorStop(0.5, `rgba(${r},${g},${b},0.14)`);
   gradient.addColorStop(1.0, `rgba(${r},${g},${b},0)`);
 
   ctx.fillStyle = gradient;
@@ -221,6 +253,7 @@ export function seedSimulationData(
   const simLinks: SimLink[] = edges.map((edge) => ({
     source: edge.source,
     target: edge.target,
+    type: edge.type,
     label: edge.label,
   }));
 

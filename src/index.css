@@ -1,27 +1,34 @@
 @import 'tailwindcss';
 
 /* ------------------------------------------------------------------ *
- * Design tokens — a deliberate "deep space / star chart" palette.
- * The graph itself is the hero; the surrounding UI stays quiet and dark
- * so the glow of the nodes is the one loud thing on screen.
+ * Design tokens — "OPC OS" portfolio map.
+ * A near-black warm void, a single bright violet bezel framing the
+ * whole screen, and product nodes that glow like stars. Colour is the
+ * one loud thing; the chrome stays quiet, monospaced, and faint.
  * ------------------------------------------------------------------ */
 @theme {
-  --color-void: #05060f; /* near-black blue, the empty space */
-  --color-void-2: #090b1a; /* panel surfaces, one notch lighter */
-  --color-haze: #141833; /* hairline borders, dividers */
-  --color-starlight: #e8ecff; /* primary text */
-  --color-starlight-dim: #8b93b8; /* secondary text */
-  --color-starlight-faint: #565d82; /* captions / meta */
+  --color-void: #070608; /* near-black, faintly warm — empty space */
+  --color-void-2: #100c12; /* panel surfaces, one notch lighter */
+  --color-haze: #241b2e; /* hairline borders, dividers */
+  --color-bezel: #9b3df2; /* the bright violet frame */
 
-  /* Node-type accents (kept in sync with src/lib/graph.utils.ts) */
-  --color-node-main: #ffe8b0;
-  --color-node-ai: #ff4fd8;
-  --color-node-integration: #8b5cff;
-  --color-node-data: #2fe0c8;
-  --color-node-feature: #ffb454;
-  --color-node-service: #4fa8ff;
+  --color-starlight: #f3eef6; /* primary text */
+  --color-starlight-dim: #9d93a8; /* secondary text */
+  --color-starlight-faint: #5f566c; /* captions / meta */
 
-  --font-display: 'Space Grotesk', system-ui, sans-serif;
+  /* Engine accents — each product runs on one "engine" (kept in sync
+   * with ENGINE_COLORS in src/lib/graph.utils.ts). */
+  --color-engine-a: #ffce8a; /* gold */
+  --color-engine-b: #b38cff; /* violet */
+  --color-engine-c: #ff6a45; /* ember */
+
+  /* Edge-relationship accents. */
+  --color-edge-extract: #ff7a45;
+  --color-edge-ascends: #ffce8a;
+  --color-edge-shares: #8aa0ff;
+  --color-edge-bundles: #49d4a8;
+
+  --font-display: 'Newsreader', Georgia, 'Times New Roman', serif;
   --font-body: 'Inter', system-ui, sans-serif;
   --font-mono: 'Space Mono', ui-monospace, monospace;
 }
@@ -34,12 +41,25 @@ body,
 
 body {
   margin: 0;
-  background-color: var(--color-void);
+  background-color: #000;
   color: var(--color-starlight);
   font-family: var(--font-body);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   overflow: hidden; /* the canvas owns the whole viewport */
+}
+
+/* The bright violet frame around the whole experience. */
+.bezel-frame {
+  position: fixed;
+  inset: 9px;
+  border: 2px solid var(--color-bezel);
+  border-radius: 2px;
+  box-shadow:
+    0 0 18px rgba(155, 61, 242, 0.45),
+    inset 0 0 50px rgba(155, 61, 242, 0.06);
+  pointer-events: none;
+  z-index: 40;
 }
 
 /* Thin, unobtrusive scrollbars inside the detail panel. */
@@ -56,7 +76,7 @@ body {
 }
 
 /* Respect users who prefer reduced motion: the CSS transitions calm down.
- * (The canvas intro also checks this flag in JS — see GraphCanvas.) */
+ * (The canvas intro + auto-tour also check this flag — see GraphCanvas.) */
 @media (prefers-reduced-motion: reduce) {
   * {
     animation-duration: 0.01ms !important;
