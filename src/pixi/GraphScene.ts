@@ -68,6 +68,12 @@ interface NodeView {
   alpha: number; // current eased alpha
   labelAlpha: number;
   glowPulse: number; // current eased glow multiplier
+  // Celestial drift: a slow orbit around the force-settled base position.
+  orbitPhase: number;
+  orbitSpeed: number;
+  orbitRadius: number;
+  dispX: number; // displayed position this frame (base + orbit)
+  dispY: number;
 }
 
 interface StarView {
@@ -337,6 +343,12 @@ export class GraphScene {
       this.nodesLayer.addChild(container);
       this.labelLayer.addChild(labelBox);
 
+      // Heavier bodies barely move; small wedges drift more — like planets
+      // at different orbital radii. Disabled entirely under reduced motion.
+      const orbitRadius = this.opts.reducedMotion
+        ? 0
+        : clamp(9 - node.size * 0.16, 1.2, 7);
+
       this.nodeViews.set(node.id, {
         node,
         container,
@@ -349,6 +361,11 @@ export class GraphScene {
         alpha: startAlpha,
         labelAlpha: 0,
         glowPulse: 1,
+        orbitPhase: Math.random() * Math.PI * 2,
+        orbitSpeed: 0.08 + Math.random() * 0.22,
+        orbitRadius,
+        dispX: node.x ?? 0,
+        dispY: node.y ?? 0,
       });
     }
   }
@@ -547,11 +564,16 @@ export class GraphScene {
   }
 
   private applySelection(id: string | null, focus: boolean): void {
+    const hadSelection = this.selectedId !== null;
     this.selectedId = id;
     this.recomputeHighlight();
     if (id && focus) {
       const node = this.nodeIndex.get(id);
       if (node) this.focusOn(node);
+    } else if (!id && hadSelection) {
+      // Deselecting (tap empty space / Esc / close) warps back out to the
+      // whole system — the "zoom to the solar system" gesture.
+      this.frameAll();
     }
   }
 
@@ -645,7 +667,7 @@ export class GraphScene {
       ? 1
       : clamp((performance.now() - this.introStart) / CONFIG.introDurationMs, 0, 1);
 
-    this.updateNodes(dt, introT);
+    this.updateNodes(dt, introT, t);
     this.drawEdges(introT);
     this.updateSelectionRing(t);
   };
@@ -675,14 +697,21 @@ export class GraphScene {
     }
   }
 
-  private updateNodes(dt: number, introT: number): void {
+  private updateNodes(dt: number, introT: number, t: number): void {
     let i = 0;
     const n = Math.max(this.nodeViews.size, 1);
     for (const view of this.nodeViews.values()) {
       const { node, container, glow, labelBox } = view;
 
-      container.x = node.x ?? 0;
-      container.y = node.y ?? 0;
+      // Celestial drift: orbit the force-settled base on a tilted ellipse.
+      const ox =
+        Math.cos(t * view.orbitSpeed + view.orbitPhase) * view.orbitRadius;
+      const oy =
+        Math.sin(t * view.orbitSpeed + view.orbitPhase) * view.orbitRadius * 0.6;
+      view.dispX = (node.x ?? 0) + ox;
+      view.dispY = (node.y ?? 0) + oy;
+      container.x = view.dispX;
+      container.y = view.dispY;
 
       const inHighlight = !this.highlight || this.highlight.has(node.id);
       const isFocus =
@@ -701,8 +730,8 @@ export class GraphScene {
       glow.alpha = (inHighlight ? 0.95 : 0.4) * stagger;
 
       // Screen-space label placement keeps text crisp at every zoom level.
-      const sx = (node.x ?? 0) * this.camera.scale + this.camera.x;
-      const sy = (node.y ?? 0) * this.camera.scale + this.camera.y;
+      const sx = view.dispX * this.camera.scale + this.camera.x;
+      const sy = view.dispY * this.camera.scale + this.camera.y;
       labelBox.position.set(sx, sy + node.size * 0.55 * this.camera.scale + 10);
 
       const labelVisible =
@@ -727,8 +756,8 @@ export class GraphScene {
     for (const link of this.opts.simLinks) {
       const sId = endpointId(link.source);
       const tId = endpointId(link.target);
-      const s = this.nodeIndex.get(sId);
-      const tt = this.nodeIndex.get(tId);
+      const s = this.nodeViews.get(sId);
+      const tt = this.nodeViews.get(tId);
       if (!s || !tt) continue;
 
       const meta = edgeMeta(link.type);
@@ -747,10 +776,10 @@ export class GraphScene {
 
       this.strokeEdge(
         g,
-        s.x ?? 0,
-        s.y ?? 0,
-        tt.x ?? 0,
-        tt.y ?? 0,
+        s.dispX,
+        s.dispY,
+        tt.dispX,
+        tt.dispY,
         meta.color,
         alpha * edgeFade,
         width * widthScale,
@@ -797,12 +826,13 @@ export class GraphScene {
     g.clear();
     const id = this.selectedId ?? this.tourFocusId;
     if (!id) return;
-    const node = this.nodeIndex.get(id);
-    if (!node) return;
+    const view = this.nodeViews.get(id);
+    if (!view) return;
+    const node = view.node;
     const color = colorForEngine(node.engine);
     const pulse = 1 + Math.sin(t * 2.4) * 0.04;
     const r = (node.size * 0.7 + 9) * pulse;
-    g.circle(node.x ?? 0, node.y ?? 0, r).stroke({
+    g.circle(view.dispX, view.dispY, r).stroke({
       width: 1.4 / this.camera.scale,
       color,
       alpha: this.selectedId ? 0.75 : 0.4,
