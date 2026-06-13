@@ -140,6 +140,13 @@ export class GraphScene {
   private lastDrag = { x: 0, y: 0 };
   private pinchDist = 0;
 
+  // Flick momentum (px/sec) + double-tap detection for touch.
+  private velocity = { x: 0, y: 0 };
+  private momentum = false;
+  private lastMoveTime = 0;
+  private lastTapTime = 0;
+  private lastTapPos = { x: 0, y: 0 };
+
   private introStart = 0;
   private elapsed = 0;
   private destroyed = false;
@@ -380,11 +387,16 @@ export class GraphScene {
 
   private onPointerDown = (e: FederatedPointerEvent): void => {
     this.markInteracted();
+    // A new touch grabs the camera mid-glide.
+    this.momentum = false;
+    this.velocity.x = 0;
+    this.velocity.y = 0;
     this.pointers.set(e.pointerId, { x: e.global.x, y: e.global.y });
     if (this.pointers.size === 1) {
       this.dragging = true;
       this.dragMoved = false;
       this.lastDrag = { x: e.global.x, y: e.global.y };
+      this.lastMoveTime = performance.now();
     } else if (this.pointers.size === 2) {
       this.dragging = false;
       this.pinchDist = this.currentPinchDistance();
@@ -407,6 +419,13 @@ export class GraphScene {
     if (Math.abs(dx) + Math.abs(dy) > 2) this.dragMoved = true;
     this.lastDrag = { x: e.global.x, y: e.global.y };
 
+    // Track a smoothed velocity so a flick keeps gliding after release.
+    const now = performance.now();
+    const dts = Math.max((now - this.lastMoveTime) / 1000, 1 / 144);
+    this.lastMoveTime = now;
+    this.velocity.x = this.velocity.x * 0.6 + clamp(dx / dts, -4500, 4500) * 0.4;
+    this.velocity.y = this.velocity.y * 0.6 + clamp(dy / dts, -4500, 4500) * 0.4;
+
     this.camera.x += dx;
     this.camera.y += dy;
     this.syncTargetToCamera(); // panning cancels any in-flight focus
@@ -415,13 +434,56 @@ export class GraphScene {
   private onPointerUp = (e: FederatedPointerEvent): void => {
     this.pointers.delete(e.pointerId);
     if (this.pointers.size < 2) this.pinchDist = 0;
-    if (this.pointers.size === 0) this.dragging = false;
+    if (this.pointers.size === 0) {
+      this.dragging = false;
+      if (!this.dragMoved) {
+        this.detectTap(e.global.x, e.global.y);
+      } else if (Math.hypot(this.velocity.x, this.velocity.y) > 90) {
+        // A real flick — let the camera coast.
+        this.momentum = true;
+      }
+    }
     if (this.pointers.size === 1) {
       const [remaining] = [...this.pointers.values()];
       this.dragging = true;
       this.lastDrag = { x: remaining.x, y: remaining.y };
+      this.lastMoveTime = performance.now();
     }
   };
+
+  /** Distinguish a single tap from a double-tap (zoom gesture). */
+  private detectTap(x: number, y: number): void {
+    const now = performance.now();
+    const near = Math.hypot(x - this.lastTapPos.x, y - this.lastTapPos.y) < 40;
+    if (now - this.lastTapTime < 300 && near) {
+      this.lastTapTime = 0;
+      this.handleDoubleTap(x, y);
+    } else {
+      this.lastTapTime = now;
+      this.lastTapPos = { x, y };
+    }
+  }
+
+  /** Double-tap zooms toward the point, or frames everything when zoomed in. */
+  private handleDoubleTap(ax: number, ay: number): void {
+    this.markInteracted();
+    this.momentum = false;
+    const zoomedIn =
+      this.camera.scale > (CONFIG.defaultScale + CONFIG.focusScale) / 2;
+    if (zoomedIn) {
+      this.frameAll();
+    } else {
+      this.zoomToTarget(ax, ay, CONFIG.focusScale);
+    }
+  }
+
+  /** Like zoomAround, but eases via the camera target instead of snapping. */
+  private zoomToTarget(ax: number, ay: number, nextScale: number): void {
+    const scale = clamp(nextScale, CONFIG.minScale, CONFIG.maxScale);
+    const wx = (ax - this.camera.x) / this.camera.scale;
+    const wy = (ay - this.camera.y) / this.camera.scale;
+    this.target = { scale, x: ax - wx * scale, y: ay - wy * scale };
+  }
 
   private onWheel = (e: WheelEvent): void => {
     e.preventDefault();
@@ -539,6 +601,21 @@ export class GraphScene {
     this.elapsed += dtMs;
 
     this.updateTour(dtMs);
+
+    // Coast after a flick: integrate velocity, decay it, stop when slow.
+    if (this.momentum && this.pointers.size === 0) {
+      this.camera.x += this.velocity.x * dt;
+      this.camera.y += this.velocity.y * dt;
+      const decay = Math.pow(0.0022, dt);
+      this.velocity.x *= decay;
+      this.velocity.y *= decay;
+      this.syncTargetToCamera();
+      if (Math.hypot(this.velocity.x, this.velocity.y) < 24) {
+        this.momentum = false;
+        this.velocity.x = 0;
+        this.velocity.y = 0;
+      }
+    }
 
     // Ease the camera toward its target.
     this.camera.x = damp(this.camera.x, this.target.x, CONFIG.cameraSmoothing, dt);

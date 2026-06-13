@@ -1,6 +1,28 @@
-import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
+import { useEffect, useState } from 'react';
+import {
+  AnimatePresence,
+  motion,
+  useDragControls,
+  useReducedMotion,
+} from 'framer-motion';
 import type { GraphNodeData } from '../lib/graph.types';
 import { colorForEngine, hexString, statusGlyph } from '../lib/graph.utils';
+
+/** True on phone-width viewports, where the panel is a bottom sheet. */
+function useIsMobile(): boolean {
+  const [isMobile, setIsMobile] = useState(
+    () =>
+      typeof window !== 'undefined' &&
+      window.matchMedia('(max-width: 639px)').matches,
+  );
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 639px)');
+    const onChange = () => setIsMobile(mq.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+  return isMobile;
+}
 
 interface NodeDetailPanelProps {
   node: GraphNodeData | null;
@@ -21,6 +43,8 @@ export function NodeDetailPanel({
   onSelect,
 }: NodeDetailPanelProps) {
   const reduce = useReducedMotion();
+  const isMobile = useIsMobile();
+  const dragControls = useDragControls();
 
   return (
     <AnimatePresence>
@@ -35,9 +59,25 @@ export function NodeDetailPanel({
           exit={reduce ? { opacity: 0 } : { x: '100%', opacity: 0 }}
           transition={{ type: 'spring', stiffness: 260, damping: 30 }}
           aria-label={`Details for ${node.label}`}
+          // Swipe the bottom sheet down to dismiss (mobile only). Drag starts
+          // from the grab handle so the scrollable body still scrolls.
+          drag={isMobile ? 'y' : false}
+          dragControls={dragControls}
+          dragListener={false}
+          dragConstraints={{ top: 0, bottom: 0 }}
+          dragElastic={{ top: 0, bottom: 0.7 }}
+          onDragEnd={(_, info) => {
+            if (info.offset.y > 90 || info.velocity.y > 600) onClose();
+          }}
         >
-          {/* Mobile grab handle */}
-          <div className="mx-auto mb-4 h-1 w-10 rounded-full bg-haze sm:hidden" />
+          {/* Mobile grab handle — drag it to dismiss the sheet. */}
+          <div
+            className="mx-auto mb-4 h-5 w-full cursor-grab touch-none sm:hidden"
+            onPointerDown={(e) => dragControls.start(e)}
+            role="presentation"
+          >
+            <div className="mx-auto h-1 w-10 rounded-full bg-haze" />
+          </div>
 
           <header className="flex items-start justify-between gap-4">
             <div>
