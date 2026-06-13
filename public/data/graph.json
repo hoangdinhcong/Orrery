@@ -1,0 +1,304 @@
+{
+  "nodes": [
+    {
+      "id": "core",
+      "label": "Core Platform",
+      "type": "main",
+      "size": 52,
+      "description": "The gravitational centre of the product. Every workflow, integration, and data stream orbits this hub.",
+      "tags": ["platform", "multi-tenant", "orchestration"],
+      "meta": { "Status": "Stable", "Owner": "Platform", "Uptime": "99.98%" }
+    },
+    {
+      "id": "jobs",
+      "label": "Job Management",
+      "type": "feature",
+      "size": 36,
+      "description": "Create, assign, and track field jobs from request to completion across the whole lifecycle.",
+      "tags": ["jobs", "lifecycle", "field"],
+      "meta": { "Status": "Stable", "Owner": "Workflows" }
+    },
+    {
+      "id": "scheduling",
+      "label": "Scheduling",
+      "type": "feature",
+      "size": 32,
+      "description": "Drag-and-drop scheduling board that balances technician availability against job priority.",
+      "tags": ["calendar", "capacity"],
+      "meta": { "Status": "Stable", "Owner": "Workflows" }
+    },
+    {
+      "id": "dispatch",
+      "label": "Dispatch",
+      "type": "feature",
+      "size": 28,
+      "description": "Routes the right technician to the right job and pushes live updates to the field.",
+      "tags": ["routing", "field"],
+      "meta": { "Status": "Stable", "Owner": "Workflows" }
+    },
+    {
+      "id": "quotes",
+      "label": "Quotes",
+      "type": "feature",
+      "size": 26,
+      "description": "Build, send, and track quotes that convert directly into scheduled jobs once approved.",
+      "tags": ["sales", "documents"]
+    },
+    {
+      "id": "invoicing",
+      "label": "Invoicing",
+      "type": "feature",
+      "size": 30,
+      "description": "Turns completed work into invoices and reconciles them with the accounting system.",
+      "tags": ["billing", "finance"],
+      "meta": { "Status": "Stable", "Owner": "Finance" }
+    },
+    {
+      "id": "timesheets",
+      "label": "Timesheets",
+      "type": "feature",
+      "size": 22,
+      "description": "Captures labour hours per job and feeds them into payroll and cost tracking.",
+      "tags": ["labour", "payroll"]
+    },
+    {
+      "id": "assets",
+      "label": "Asset Registry",
+      "type": "feature",
+      "size": 26,
+      "description": "A living register of every serviced asset, its history, and its maintenance schedule.",
+      "tags": ["assets", "maintenance"]
+    },
+    {
+      "id": "inventory",
+      "label": "Inventory",
+      "type": "feature",
+      "size": 24,
+      "description": "Tracks parts and stock across warehouses and vans, and reserves them against jobs.",
+      "tags": ["stock", "parts"]
+    },
+    {
+      "id": "mobile",
+      "label": "Field App",
+      "type": "feature",
+      "size": 30,
+      "description": "The offline-first mobile app technicians use on site to run jobs, capture photos, and collect signatures.",
+      "tags": ["mobile", "offline", "field"],
+      "meta": { "Status": "Stable", "Platforms": "iOS · Android" }
+    },
+
+    {
+      "id": "auth",
+      "label": "Identity & Access",
+      "type": "service",
+      "size": 24,
+      "description": "Authentication, roles, and tenant isolation enforced at the edge of every request.",
+      "tags": ["security", "rbac"],
+      "meta": { "Status": "Stable", "Owner": "Platform" }
+    },
+    {
+      "id": "notifications",
+      "label": "Notifications",
+      "type": "service",
+      "size": 22,
+      "description": "Real-time push, email, and SMS notifications delivered over a streaming channel.",
+      "tags": ["realtime", "sse"]
+    },
+    {
+      "id": "search",
+      "label": "Search",
+      "type": "service",
+      "size": 20,
+      "description": "Unified search across jobs, customers, and assets with typo tolerance and ranking.",
+      "tags": ["search", "indexing"]
+    },
+    {
+      "id": "storage",
+      "label": "File Storage",
+      "type": "service",
+      "size": 20,
+      "description": "Secure object storage for photos, documents, and generated PDFs, scoped per tenant.",
+      "tags": ["files", "s3"]
+    },
+
+    {
+      "id": "warehouse",
+      "label": "Data Warehouse",
+      "type": "data",
+      "size": 28,
+      "description": "The analytical store that consolidates operational data for reporting and modelling.",
+      "tags": ["analytics", "etl"],
+      "meta": { "Status": "Stable", "Owner": "Data" }
+    },
+    {
+      "id": "reporting",
+      "label": "Reporting",
+      "type": "data",
+      "size": 24,
+      "description": "Dashboards and scheduled reports built on top of the warehouse for operational insight.",
+      "tags": ["dashboards", "bi"]
+    },
+    {
+      "id": "audit",
+      "label": "Audit Log",
+      "type": "data",
+      "size": 18,
+      "description": "An append-only record of every meaningful action, used for compliance and debugging.",
+      "tags": ["compliance", "immutable"]
+    },
+    {
+      "id": "vectors",
+      "label": "Vector Index",
+      "type": "data",
+      "size": 22,
+      "description": "Tenant-isolated embeddings that power retrieval for the AI features.",
+      "tags": ["embeddings", "rag"],
+      "meta": { "Isolation": "Per-tenant" }
+    },
+
+    {
+      "id": "copilot",
+      "label": "AI Copilot",
+      "type": "ai",
+      "size": 32,
+      "description": "A conversational assistant that reads and writes across the platform on the user's behalf.",
+      "tags": ["agent", "chat"],
+      "meta": { "Status": "Beta", "Owner": "AI Platform" }
+    },
+    {
+      "id": "rag",
+      "label": "Retrieval (RAG)",
+      "type": "ai",
+      "size": 26,
+      "description": "Grounds the copilot in tenant data by retrieving the most relevant context per query.",
+      "tags": ["retrieval", "grounding"]
+    },
+    {
+      "id": "extraction",
+      "label": "Bill Extraction",
+      "type": "ai",
+      "size": 28,
+      "description": "Pulls structured line items out of supplier bills and PDFs using a guarded dual-model pipeline.",
+      "tags": ["extraction", "documents"],
+      "meta": { "Status": "Beta", "Pattern": "Dual-LLM" }
+    },
+    {
+      "id": "photo",
+      "label": "Photo Validation",
+      "type": "ai",
+      "size": 24,
+      "description": "Checks on-site photos for completeness and flags duplicates and anomalies before sign-off.",
+      "tags": ["vision", "quality"]
+    },
+    {
+      "id": "forecast",
+      "label": "Demand Forecast",
+      "type": "ai",
+      "size": 22,
+      "description": "Predicts job volume and parts demand to inform scheduling and stock decisions.",
+      "tags": ["forecasting", "ml"]
+    },
+    {
+      "id": "classifier",
+      "label": "Intent Classifier",
+      "type": "ai",
+      "size": 20,
+      "description": "A lightweight router that reads each request and sends it to the right downstream agent.",
+      "tags": ["routing", "nlp"]
+    },
+
+    {
+      "id": "accounting",
+      "label": "Accounting Sync",
+      "type": "integration",
+      "size": 24,
+      "description": "Two-way sync of invoices, payments, and contacts with external accounting software.",
+      "tags": ["xero", "quickbooks"]
+    },
+    {
+      "id": "payments",
+      "label": "Payments",
+      "type": "integration",
+      "size": 22,
+      "description": "Collects card and bank payments against invoices and reconciles them automatically.",
+      "tags": ["stripe", "finance"]
+    },
+    {
+      "id": "maps",
+      "label": "Maps & Routing",
+      "type": "integration",
+      "size": 22,
+      "description": "Geocoding, travel-time estimates, and route optimisation for dispatch.",
+      "tags": ["maps", "geo"]
+    },
+    {
+      "id": "calendar",
+      "label": "Calendar Sync",
+      "type": "integration",
+      "size": 18,
+      "description": "Keeps technician calendars in sync with external providers in both directions.",
+      "tags": ["calendar", "ical"]
+    },
+    {
+      "id": "messaging",
+      "label": "SMS & Email",
+      "type": "integration",
+      "size": 18,
+      "description": "Outbound messaging gateway used by notifications and customer communications.",
+      "tags": ["twilio", "email"]
+    }
+  ],
+  "edges": [
+    { "source": "core", "target": "jobs", "label": "manages" },
+    { "source": "core", "target": "scheduling", "label": "manages" },
+    { "source": "core", "target": "invoicing", "label": "manages" },
+    { "source": "core", "target": "mobile", "label": "serves" },
+    { "source": "core", "target": "auth", "label": "secured by" },
+    { "source": "core", "target": "warehouse", "label": "feeds" },
+    { "source": "core", "target": "copilot", "label": "powers" },
+    { "source": "core", "target": "notifications", "label": "uses" },
+
+    { "source": "jobs", "target": "scheduling", "label": "scheduled by" },
+    { "source": "jobs", "target": "dispatch", "label": "dispatched by" },
+    { "source": "jobs", "target": "timesheets", "label": "logs" },
+    { "source": "jobs", "target": "assets", "label": "services" },
+    { "source": "jobs", "target": "inventory", "label": "consumes" },
+    { "source": "jobs", "target": "quotes", "label": "created from" },
+    { "source": "jobs", "target": "mobile", "label": "run in" },
+
+    { "source": "scheduling", "target": "dispatch", "label": "drives" },
+    { "source": "scheduling", "target": "calendar", "label": "syncs" },
+    { "source": "dispatch", "target": "maps", "label": "routes via" },
+    { "source": "dispatch", "target": "mobile", "label": "notifies" },
+
+    { "source": "quotes", "target": "invoicing", "label": "converts to" },
+    { "source": "invoicing", "target": "accounting", "label": "syncs" },
+    { "source": "invoicing", "target": "payments", "label": "collected by" },
+    { "source": "timesheets", "target": "warehouse", "label": "feeds" },
+
+    { "source": "mobile", "target": "storage", "label": "uploads to" },
+    { "source": "mobile", "target": "photo", "label": "validated by" },
+    { "source": "assets", "target": "forecast", "label": "informs" },
+    { "source": "inventory", "target": "forecast", "label": "informs" },
+
+    { "source": "notifications", "target": "messaging", "label": "sends via" },
+    { "source": "search", "target": "warehouse", "label": "indexes" },
+    { "source": "core", "target": "search", "label": "uses" },
+    { "source": "core", "target": "storage", "label": "uses" },
+
+    { "source": "warehouse", "target": "reporting", "label": "feeds" },
+    { "source": "warehouse", "target": "forecast", "label": "trains" },
+    { "source": "warehouse", "target": "vectors", "label": "embeds into" },
+    { "source": "audit", "target": "warehouse", "label": "feeds" },
+    { "source": "auth", "target": "audit", "label": "writes to" },
+
+    { "source": "copilot", "target": "classifier", "label": "routes via" },
+    { "source": "copilot", "target": "rag", "label": "grounded by" },
+    { "source": "rag", "target": "vectors", "label": "queries" },
+    { "source": "extraction", "target": "storage", "label": "reads from" },
+    { "source": "extraction", "target": "invoicing", "label": "fills" },
+    { "source": "classifier", "target": "jobs", "label": "acts on" },
+    { "source": "photo", "target": "storage", "label": "reads from" },
+    { "source": "copilot", "target": "extraction", "label": "invokes" }
+  ]
+}

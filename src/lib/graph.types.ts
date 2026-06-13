@@ -1,0 +1,63 @@
+import type { SimulationLinkDatum, SimulationNodeDatum } from 'd3-force';
+
+/**
+ * The kinds of node in the product graph. Each maps to a glow colour in
+ * `graph.utils.ts`. Add a new type here and give it a colour there.
+ */
+export type NodeType =
+  | 'main'
+  | 'feature'
+  | 'integration'
+  | 'data'
+  | 'ai'
+  | 'service';
+
+/** A node exactly as it appears in `public/data/graph.json`. */
+export interface GraphNodeData {
+  id: string;
+  label: string;
+  type: NodeType;
+  /** Visual radius in world units. Bigger = more important. */
+  size: number;
+  description: string;
+  /** Optional free-form tags shown in the detail panel. */
+  tags?: string[];
+  /** Optional key/value facts shown in the detail panel. */
+  meta?: Record<string, string>;
+}
+
+/** An edge exactly as it appears in the JSON (source/target are node ids). */
+export interface GraphEdgeData {
+  source: string;
+  target: string;
+  label?: string;
+}
+
+/** The full shape of `graph.json`. */
+export interface GraphData {
+  nodes: GraphNodeData[];
+  edges: GraphEdgeData[];
+}
+
+/**
+ * A node once it has been handed to d3-force. d3 mutates `x`, `y`, `vx`,
+ * `vy` in place on every tick — that mutation is exactly how the layout
+ * "settles", and what the Pixi renderer reads each frame.
+ */
+export interface SimNode extends GraphNodeData, SimulationNodeDatum {}
+
+/**
+ * A link once it has been handed to d3-force. Before the simulation
+ * initialises, `source`/`target` are ids (strings); afterwards d3 replaces
+ * them with references to the `SimNode` objects themselves.
+ */
+export interface SimLink extends SimulationLinkDatum<SimNode> {
+  label?: string;
+}
+
+/** Camera state in screen space: world is translated by (x,y) then scaled. */
+export interface Camera {
+  x: number;
+  y: number;
+  scale: number;
+}
